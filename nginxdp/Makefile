@@ -1,25 +1,21 @@
 # Install the nginx data-placement (nginxdp) components.
 #
-# Install locations and modes mirror the AP image build (see ../Dockerfile):
-# the Condor daemon config (../40-dataplacement.conf) starts the services by
-# absolute path from /usr/local/sbin, and nginxdp.py finds its template one
-# level up from its own install directory
-# (/usr/local/sbin/nginxdp.py -> /usr/local/etc/nginx-dataplacement.conf.template).
+# By default, scripts are installed into /usr/local/sbin,
+# and a template file is installed into /usr/local/etc.
+# Configuration is installed to /etc/nginxdp.ini; an existing
+# config file will not be overwritten; instead, /etc/nginxdp.ini.new
+# is created.
 #
-# The Condor config snippets and user mapfiles that live in ../ are not handled
-# here; they belong to the image build.
+# The "dirs" target creates the directories needed for the data placement
+# server to work (using the default config) under DATA_DIR
+# (default /srv/dataplacement).
 #
 # Usage (paths can be staged with DESTDIR, relocated with PREFIX):
 #   make                          show this help
 #   make install                  install services, template, and config
 #   make install DESTDIR=/tmp/s   stage a tree for packaging
 #   make dirs                     create the nginx data/log directories
-#   make check                    byte-compile the Python services
 #   make uninstall                remove installed files
-#
-# `install` needs root on the real system tree. An existing config file that
-# differs from the shipped one is left alone; the new default is written next to
-# it as nginxdp.ini.new.
 
 .DEFAULT_GOAL := help
 
@@ -32,7 +28,7 @@ PKGCONFDIR ?= $(PREFIX)/etc
 SYSCONFDIR ?= /etc
 
 # Runtime paths used by the `dirs` target (see nginxdp.ini).
-DATA_DIR ?= /srv/nginx-dataplacement
+DATA_DIR ?= /srv/dataplacement
 LOG_DIR ?= /var/log/dataplacement
 CONDOR_MAPFILE_DIR ?= /etc/condor/user-mapfiles
 NGINX_USER ?= nginx
@@ -50,12 +46,12 @@ CONF := nginxdp.ini
 
 CONFS := $(SBIN_EXEC) $(SBIN_DATA)
 
-.PHONY: help all install dirs uninstall check clean
+.PHONY: help all install dirs uninstall
 
 all: install
 
 help:
-	@sed -n '2,23p' $(firstword $(MAKEFILE_LIST))
+	@sed -n '2,18p' $(firstword $(MAKEFILE_LIST))
 
 install:
 	@$(INSTALL) -d -m 0755 $(DESTDIR)$(SBINDIR) $(DESTDIR)$(PKGCONFDIR) $(DESTDIR)$(SYSCONFDIR)
@@ -102,9 +98,3 @@ uninstall:
 	@rm -f $(DESTDIR)$(PKGCONFDIR)/$(notdir $(TEMPLATE))
 	@rm -f $(DESTDIR)$(SYSCONFDIR)/$(notdir $(CONF)) $(DESTDIR)$(SYSCONFDIR)/$(notdir $(CONF)).new
 
-check:
-	@$(PYTHON) -m py_compile $(CONFS)
-	@echo "  CHECK ok -- $(words $(CONFS)) Python modules compiled"
-
-clean:
-	@rm -rf __pycache__

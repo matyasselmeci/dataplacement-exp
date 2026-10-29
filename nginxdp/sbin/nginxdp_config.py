@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 DEFAULT_CONFIG_PATH = "/etc/nginxdp.ini"
 DEFAULT_PORT = 9681
-DEFAULT_DATA_DIR = "/srv/nginx-dataplacement"
+DEFAULT_DATA_DIR = "/srv/dataplacement"
 DEFAULT_LOG_DIR = "/var/log/dataplacement"
 DEFAULT_GENERATED_CONFIG = "/run/nginxdp/nginx.conf"
 DEFAULT_UPLOADMOVER_PERIOD = 5  # seconds
