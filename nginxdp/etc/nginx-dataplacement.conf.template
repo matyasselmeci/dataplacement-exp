@@ -1,0 +1,105 @@
+daemon off;
+pid "@DATA_DIR@/nginx.pid";
+
+events {}
+
+http {
+    error_log  "@LOG_DIR@/error.log";
+    access_log "@LOG_DIR@/access.log";
+
+    upstream dataauth {
+        # Unix domain socket served by /usr/local/sbin/dataauth.py (see
+        # SOCKET_PATH there); avoids exposing the authorizer on a TCP port.
+        server "unix:@DATA_DIR@/dataauth.sock";
+    }
+
+    server {
+        @LISTEN_DIRECTIVE@
+@SSL_DIRECTIVES@
+
+        location /auth {
+            internal;
+
+            proxy_pass http://dataauth/auth;
+
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header X-Original-Method $request_method;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            # Sending the normalized URI ($uri) is useless, it's always "/auth".
+            # dataauth has to do the normalization.
+
+            # Don't send the whole request body, and remove the Content-Length header so the endpoint doesn't wait for data.
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+
+            # The body doesn't get sent to this endpoint but client_max_body_size
+            # must still be as big as /files/ or we get a bad request error.
+            client_max_body_size 5g;
+        }
+
+        # Unauthenticated liveness probe used by the webapp's health check.
+        location = /health {
+            default_type text/plain;
+            return 200 "OK\n";
+        }
+
+        location /files/ {
+            # Read-only view (browsing/downloading) of files already moved by uploadmover.py.
+            # Uploads go to /files_upload/ instead. CORS headers are needed because the browser uses Javascript.
+
+            add_header Access-Control-Allow-Origin $http_origin always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type" always;
+            add_header Access-Control-Expose-Headers "X-Dataauth-Response" always;
+
+            if ($request_method = OPTIONS) {
+                # Without this, OPTIONS requests will be rejected with a 405 Method Not Allowed error.
+                return 204;
+            }
+
+            # Authorization via callout to dataauth.py.  The response is also
+            # returned in the X-Dataauth-Response header so the client can see it.
+            auth_request /auth;
+            auth_request_set $dataauth_response $upstream_http_x_dataauth_response;
+            add_header X-Dataauth-Response $dataauth_response always;
+
+            # Files are read from the configured data directory.
+            root "@DATA_DIR@";
+
+            autoindex on;
+            autoindex_format json;
+        }
+
+        location /files_upload/ {
+            # Uploads land here; uploadmover.py moves them to /files/ with proper ownership.
+            # Uploading works via Javascript so we need to set the CORS headers.
+
+            add_header Access-Control-Allow-Origin $http_origin always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type" always;
+            add_header Access-Control-Expose-Headers "X-Dataauth-Response" always;
+
+            if ($request_method = OPTIONS) {
+                # Without this, OPTIONS requests will be rejected with a 405 Method Not Allowed error.
+                return 204;
+            }
+
+            # Authorization via callout to dataauth.py.  The response is also
+            # returned in the X-Dataauth-Response header so the client can see it.
+            auth_request /auth;
+            auth_request_set $dataauth_response $upstream_http_x_dataauth_response;
+            add_header X-Dataauth-Response $dataauth_response always;
+
+            # Files will go under the configured data directory's files_upload/.
+            root "@DATA_DIR@";
+
+            dav_methods PUT DELETE MKCOL COPY MOVE;
+
+            # Make directories recursively on PUT
+            create_full_put_path on;
+
+            client_max_body_size 5g;
+            client_body_temp_path "@DATA_DIR@/files_upload_tmp";
+        }
+    }
+}
