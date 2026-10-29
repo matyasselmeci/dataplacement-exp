@@ -12,6 +12,17 @@ DEFAULT_LOG_DIR = "/var/log/dataplacement"
 DEFAULT_GENERATED_CONFIG = "/run/nginxdp/nginx.conf"
 DEFAULT_UPLOADMOVER_PERIOD = 5  # seconds
 
+NGINX_OPTIONS = (
+    "port",
+    "ssl_enabled",
+    "ssl_certificate",
+    "ssl_certificate_key",
+    "data_dir",
+    "log_dir",
+    "generated_config",
+    "uploadmover_period",
+)
+
 
 class NginxDPConfig(NamedTuple):
     """Validated settings shared by nginx, dataauth, and uploadmover."""
@@ -38,13 +49,18 @@ def _absolute_path(value: str, name: str) -> pathlib.Path:
 
 
 def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> NginxDPConfig:
-    """Read and validate the shared ConfigParser-format service configuration."""
+    """Read and validate service settings, with NGINXDP_* values overriding the ini."""
     parser = configparser.ConfigParser(interpolation=None)
     with open(config_path, encoding="utf-8") as config_file:
         parser.read_file(config_file)
 
     if not parser.has_section("nginx"):
         raise ValueError("configuration is missing the [nginx] section")
+
+    for option in NGINX_OPTIONS:
+        environment_value = os.environ.get(f"NGINXDP_{option.upper()}")
+        if environment_value is not None:
+            parser.set("nginx", option, environment_value)
 
     try:
         port = parser.getint("nginx", "port", fallback=DEFAULT_PORT)
