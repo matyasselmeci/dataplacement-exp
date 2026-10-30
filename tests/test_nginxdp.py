@@ -27,7 +27,7 @@ def test_load_config_uses_defaults_and_custom_paths(tmp_path):
     config = nginxdp_config.load_config(str(defaults))
     assert config.port == 9681
     assert not config.ssl_enabled
-    assert config.data_dir == Path("/srv/nginx-dataplacement")
+    assert config.data_dir == Path("/srv/dataplacement")
     assert config.log_dir == Path("/var/log/dataplacement")
 
     custom = _write_config(

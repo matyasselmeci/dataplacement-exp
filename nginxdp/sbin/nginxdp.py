@@ -11,9 +11,11 @@ import sys
 from nginxdp_config import DEFAULT_CONFIG_PATH, load_config
 
 NGINX_BINARY = "/usr/sbin/nginx"
-TEMPLATE_PATH = (
-    pathlib.Path(__file__).parent.parent / "etc/nginx-dataplacement.conf.template"
-)
+_PREFIX = pathlib.Path(__file__).parent.parent
+TEMPLATE_PATH = _PREFIX / "share/dataplacement/nginx-dataplacement.conf.template"
+if not TEMPLATE_PATH.is_file():
+    # Keep source-tree tests working while installed scripts use the shared-data path.
+    TEMPLATE_PATH = _PREFIX / "nginx-dataplacement.conf.template"
 
 
 def render_config(template: str, config) -> str:

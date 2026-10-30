@@ -1,7 +1,7 @@
 # Install the nginx data-placement (nginxdp) components.
 #
 # By default, scripts are installed into /usr/local/sbin,
-# and a template file is installed into /usr/local/etc.
+# and a template file is installed into /usr/local/share/dataplacement.
 # Configuration is installed to /etc/nginxdp.ini; an existing
 # config file will not be overwritten; instead, /etc/nginxdp.ini.new
 # is created.
@@ -24,7 +24,7 @@ PREFIX ?= /usr/local
 
 # Where the components land.
 SBINDIR ?= $(PREFIX)/sbin
-PKGCONFDIR ?= $(PREFIX)/etc
+TEMPLATE_DIR ?= $(PREFIX)/share/dataplacement
 SYSCONFDIR ?= /etc
 
 # Runtime paths used by the `dirs` target (see nginxdp.ini).
@@ -41,7 +41,7 @@ PYTHON ?= python3
 SBIN_EXEC := dataauth.py uploadmover.py nginxdp.py
 # Shared config loader, imported by the services rather than run.
 SBIN_DATA := nginxdp_config.py
-TEMPLATE := etc/nginx-dataplacement.conf.template
+TEMPLATE := nginx-dataplacement.conf.template
 CONF := nginxdp.ini
 
 CONFS := $(SBIN_EXEC) $(SBIN_DATA)
@@ -54,7 +54,7 @@ help:
 	@sed -n '2,18p' $(firstword $(MAKEFILE_LIST))
 
 install:
-	@$(INSTALL) -d -m 0755 $(DESTDIR)$(SBINDIR) $(DESTDIR)$(PKGCONFDIR) $(DESTDIR)$(SYSCONFDIR)
+	@$(INSTALL) -d -m 0755 $(DESTDIR)$(SBINDIR) $(DESTDIR)$(TEMPLATE_DIR) $(DESTDIR)$(SYSCONFDIR)
 	@for f in $(SBIN_EXEC); do \
 	    echo "  INSTALL sbin/$$f -> $(SBINDIR)/$$f"; \
 	    $(INSTALL) -m 0755 "sbin/$$f" "$(DESTDIR)$(SBINDIR)/$$f" || exit 1; \
@@ -63,8 +63,8 @@ install:
 	    echo "  INSTALL sbin/$$f -> $(SBINDIR)/$$f"; \
 	    $(INSTALL) -m 0644 "sbin/$$f" "$(DESTDIR)$(SBINDIR)/$$f" || exit 1; \
 	done
-	@echo "  INSTALL $(TEMPLATE) -> $(PKGCONFDIR)/$(notdir $(TEMPLATE))"
-	@$(INSTALL) -m 0644 $(TEMPLATE) "$(DESTDIR)$(PKGCONFDIR)/$(notdir $(TEMPLATE))"
+	@echo "  INSTALL $(TEMPLATE) -> $(TEMPLATE_DIR)/$(notdir $(TEMPLATE))"
+	@$(INSTALL) -m 0644 $(TEMPLATE) "$(DESTDIR)$(TEMPLATE_DIR)/$(notdir $(TEMPLATE))"
 	@target='$(DESTDIR)$(SYSCONFDIR)/$(notdir $(CONF))'; \
 	if [ -f "$$target" ] && ! cmp -s $(CONF) "$$target"; then \
 	    echo "  INSTALL $(CONF) -> $(SYSCONFDIR)/$(notdir $(CONF)).new (existing config kept)"; \
@@ -95,6 +95,5 @@ dirs:
 
 uninstall:
 	@rm -f $(addprefix $(DESTDIR)$(SBINDIR)/,$(CONFS))
-	@rm -f $(DESTDIR)$(PKGCONFDIR)/$(notdir $(TEMPLATE))
+	@rm -f $(DESTDIR)$(TEMPLATE_DIR)/$(notdir $(TEMPLATE))
 	@rm -f $(DESTDIR)$(SYSCONFDIR)/$(notdir $(CONF)) $(DESTDIR)$(SYSCONFDIR)/$(notdir $(CONF)).new
-
