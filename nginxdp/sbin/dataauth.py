@@ -19,6 +19,7 @@ import binascii
 import json
 import logging
 import os
+import pwd
 import socket
 import subprocess as sp
 import tempfile
@@ -208,6 +209,16 @@ def ping_with_idtoken(idtoken: str, method: str) -> t.Tuple[bool, str]:
     return success, remote_user_name
 
 
+def drop_privileges(username: str) -> None:
+    """Drop root privileges to the given user, including supplementary groups."""
+    if os.geteuid() != 0:
+        return
+    user = pwd.getpwnam(username)
+    os.initgroups(user.pw_name, user.pw_gid)
+    os.setgid(user.pw_gid)
+    os.setuid(user.pw_uid)
+
+
 class UnixDomainHTTPServer(ThreadingHTTPServer):
     """
     A ThreadingHTTPServer that listens on a Unix domain socket.
@@ -364,6 +375,12 @@ def main(argv=None):
     """Run the authorization service with paths from the shared configuration."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH)
+    parser.add_argument(
+        "--user",
+        default="nginx",
+        metavar="USER",
+        help="user to drop privileges to when running as root (default: %(default)s)",
+    )
     parser.add_argument("socket_path", nargs="?")
     args = parser.parse_args(argv)
     try:
@@ -379,6 +396,10 @@ def main(argv=None):
     logger.propagate = False
     socket_path = args.socket_path or str(config.data_dir / "dataauth.sock")
     logger.info("Starting dataauth server on socket %s", socket_path)
+    try:
+        drop_privileges(args.user)
+    except (KeyError, OSError) as err:
+        parser.error("cannot drop privileges to {!r}: {}".format(args.user, err))
     server = UnixDomainHTTPServer(socket_path, AuthHandler)  # type: ignore
     try:
         server.serve_forever()
