@@ -26,6 +26,7 @@ cd nginxdp
 %make_install PREFIX=%{_prefix} UNITDIR=%{_unitdir}
 mkdir -p ${RPM_BUILD_ROOT}/srv/dataplacement/{files,files_upload,files_upload_tmp}
 mkdir -p ${RPM_BUILD_ROOT}/var/log/dataplacement
+touch ${RPM_BUILD_ROOT}/srv/dataplacement/dataauth.sock
 
 %files
 %config(noreplace) /etc/nginxdp.ini
@@ -38,6 +39,8 @@ mkdir -p ${RPM_BUILD_ROOT}/var/log/dataplacement
 /usr/sbin/nginxdp.py
 /usr/sbin/nginxdp_config.py
 /usr/share/dataplacement/*
+%attr(755,nginx,nginx) %dir /srv/dataplacement
+%ghost /srv/dataplacement/dataauth.sock
 %attr(755,nginx,nginx) %dir /srv/dataplacement/files
 %attr(755,nginx,nginx) %dir /srv/dataplacement/files_upload
 %attr(755,nginx,nginx) %dir /srv/dataplacement/files_upload_tmp

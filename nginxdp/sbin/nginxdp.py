@@ -158,7 +158,16 @@ def main(argv=None) -> int:
         return 1
 
     try:
-        os.execv(NGINX_BINARY, [NGINX_BINARY, "-c", str(config.generated_config)])
+        os.execv(
+            NGINX_BINARY,
+            [
+                NGINX_BINARY,
+                "-c",
+                str(config.generated_config),
+                "-e",
+                os.path.join(config.log_dir, "nginx.log"),
+            ],
+        )
     except OSError as err:
         print(f"nginxdp: unable to execute nginx: {err}", file=sys.stderr)
         return 1
