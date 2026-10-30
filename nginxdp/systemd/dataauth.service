@@ -9,4 +9,4 @@ Type=simple
 User=nginx
 ExecStart=/usr/bin/python3 /usr/sbin/dataauth.py
 Restart=on-failure
-RestartSec=5s
+RestartSec=15s

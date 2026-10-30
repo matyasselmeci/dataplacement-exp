@@ -9,4 +9,4 @@ Type=simple
 User=root
 ExecStart=/usr/bin/python3 /usr/sbin/uploadmover.py
 Restart=on-failure
-RestartSec=5s
+RestartSec=15s
