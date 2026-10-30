@@ -26,7 +26,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 *.rpm
-*.tar*
+*.tar
+*.tar.*
 
 # PyInstaller
 #   Usually these files are written by a python script from a template
@@ -72,10 +73,6 @@ instance/
 
 # Sphinx documentation
 docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
 
 # Jupyter Notebook
 .ipynb_checkpoints

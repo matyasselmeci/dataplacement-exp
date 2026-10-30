@@ -26,6 +26,7 @@ PREFIX ?= /usr/local
 SBINDIR ?= $(PREFIX)/sbin
 TEMPLATE_DIR ?= $(PREFIX)/share/dataplacement
 SYSCONFDIR ?= /etc
+UNITDIR ?= /usr/lib/systemd/system
 
 # Runtime paths used by the `dirs` target (see nginxdp.ini).
 DATA_DIR ?= /srv/dataplacement
@@ -43,6 +44,7 @@ SBIN_EXEC := dataauth.py uploadmover.py nginxdp.py
 SBIN_DATA := nginxdp_config.py
 TEMPLATE := nginx-dataplacement.conf.template
 CONF := nginxdp.ini
+SYSTEMD_FILES := dataauth.service nginxdp.service nginxdp.target uploadmover.service
 
 CONFS := $(SBIN_EXEC) $(SBIN_DATA)
 
@@ -54,7 +56,7 @@ help:
 	@sed -n '2,18p' $(firstword $(MAKEFILE_LIST))
 
 install:
-	@$(INSTALL) -d -m 0755 $(DESTDIR)$(SBINDIR) $(DESTDIR)$(TEMPLATE_DIR) $(DESTDIR)$(SYSCONFDIR)
+	@$(INSTALL) -d -m 0755 $(DESTDIR)$(SBINDIR) $(DESTDIR)$(TEMPLATE_DIR) $(DESTDIR)$(SYSCONFDIR) $(DESTDIR)$(UNITDIR)
 	@for f in $(SBIN_EXEC); do \
 	    echo "  INSTALL sbin/$$f -> $(SBINDIR)/$$f"; \
 	    $(INSTALL) -m 0755 "sbin/$$f" "$(DESTDIR)$(SBINDIR)/$$f" || exit 1; \
@@ -73,6 +75,10 @@ install:
 	    echo "  INSTALL $(CONF) -> $(SYSCONFDIR)/$(notdir $(CONF))"; \
 	    $(INSTALL) -m 0644 $(CONF) "$$target"; \
 	fi
+	@for f in $(SYSTEMD_FILES); do \
+	    echo "  INSTALL systemd/$$f -> $(UNITDIR)/$$f"; \
+	    $(INSTALL) -m 0644 "systemd/$$f" "$(DESTDIR)$(UNITDIR)/$$f" || exit 1; \
+	done
 
 # Nginx runs as a non-root user, so its directories and log files must exist and
 # belong to it before the first start.
@@ -97,3 +103,5 @@ uninstall:
 	@rm -f $(addprefix $(DESTDIR)$(SBINDIR)/,$(CONFS))
 	@rm -f $(DESTDIR)$(TEMPLATE_DIR)/$(notdir $(TEMPLATE))
 	@rm -f $(DESTDIR)$(SYSCONFDIR)/$(notdir $(CONF)) $(DESTDIR)$(SYSCONFDIR)/$(notdir $(CONF)).new
+	@rm -f $(addprefix $(DESTDIR)$(UNITDIR)/,$(SYSTEMD_FILES))
+

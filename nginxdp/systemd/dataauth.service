@@ -1,0 +1,12 @@
+[Unit]
+Description=Data placement authorization service
+Wants=network-online.target
+After=network-online.target
+PartOf=nginxdp.target
+
+[Service]
+Type=simple
+User=nginx
+ExecStart=/usr/bin/python3 /usr/sbin/dataauth.py
+Restart=on-failure
+RestartSec=5s

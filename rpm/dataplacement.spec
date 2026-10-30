@@ -1,6 +1,6 @@
 Summary: dataplacement
 Name: dataplacement
-Version: 0.0.3
+Version: 0.0.4
 Release: 1%{?dist}
 License: Apache 2.0
 Url: https://github.com/matyasselmeci/dataplacement-exp
@@ -23,12 +23,16 @@ exit 0
 
 %install
 cd nginxdp
-make install DESTDIR=$RPM_BUILD_ROOT PREFIX=/usr
+%make_install PREFIX=%{_prefix} UNITDIR=%{_unitdir}
 mkdir -p ${RPM_BUILD_ROOT}/srv/dataplacement/{files,files_upload,files_upload_tmp}
 mkdir -p ${RPM_BUILD_ROOT}/var/log/dataplacement
 
 %files
 %config(noreplace) /etc/nginxdp.ini
+%{_unitdir}/dataauth.service
+%{_unitdir}/nginxdp.service
+%{_unitdir}/uploadmover.service
+%{_unitdir}/nginxdp.target
 /usr/sbin/dataauth.py
 /usr/sbin/uploadmover.py
 /usr/sbin/nginxdp.py
@@ -40,6 +44,9 @@ mkdir -p ${RPM_BUILD_ROOT}/var/log/dataplacement
 %attr(751,nginx,root) %dir /var/log/dataplacement
 
 %changelog
+* Thu Oct 29 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.4
+- Add systemd files
+
 * Thu Oct 29 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.3
 - Initial
 

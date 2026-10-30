@@ -1,0 +1,9 @@
+[Unit]
+Description=Data placement nginx services
+Wants=network-online.target
+After=network-online.target
+Wants=dataauth.service nginxdp.service uploadmover.service
+After=dataauth.service nginxdp.service uploadmover.service
+
+[Install]
+WantedBy=multi-user.target
