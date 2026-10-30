@@ -7,12 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-SCRIPT_PATH = (
-    Path(__file__).parents[1]
-    / "nginxdp"
-    / "sbin"
-    / "uploadmover.py"
-)
+SCRIPT_PATH = Path(__file__).parents[1] / "nginxdp" / "sbin" / "uploadmover.py"
 sys.path.insert(0, str(SCRIPT_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("uploadmover", SCRIPT_PATH)
 uploadmover = importlib.util.module_from_spec(SPEC)

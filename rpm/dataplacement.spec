@@ -1,6 +1,6 @@
 Summary: dataplacement
 Name: dataplacement
-Version: 0.0.5
+Version: 0.0.6
 Release: 1%{?dist}
 License: Apache 2.0
 Url: https://github.com/matyasselmeci/dataplacement-exp
@@ -47,6 +47,9 @@ touch ${RPM_BUILD_ROOT}/srv/dataplacement/dataauth.sock
 %attr(751,nginx,root) %dir /var/log/dataplacement
 
 %changelog
+* Fri Oct 30 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.6
+- Have nginx be the one to drop privs (so it can read root-owned files such as the host key)
+
 * Thu Oct 29 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.5
 - Fix permissions issues
 

@@ -151,7 +151,7 @@ def main(argv=None) -> int:
         rendered = render_config(template, config)
         _write_generated_config(rendered, config.generated_config)
         _prepare_service_paths(config)
-        _drop_to_nginx()
+        # _drop_to_nginx()
         check_config_readable(config.generated_config)
     except (OSError, ValueError, KeyError) as err:
         print(f"nginxdp: {err}", file=sys.stderr)

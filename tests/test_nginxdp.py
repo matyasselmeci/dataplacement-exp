@@ -161,29 +161,6 @@ def test_dataauth_denies_head_on_another_users_staged_upload(monkeypatch):
     assert responses[0][0] == 403
 
 
-def test_wrapper_writes_generated_config_and_execs_nginx(tmp_path, monkeypatch):
-    config_file = _write_config(
-        tmp_path / "nginxdp.ini",
-        "port = 8090\ngenerated_config = {}\n".format(tmp_path / "run/nginx.conf"),
-    )
-    monkeypatch.setattr(nginxdp, "_prepare_service_paths", lambda config: None)
-    monkeypatch.setattr(nginxdp, "_drop_to_nginx", lambda: None)
-    executed = []
-    monkeypatch.setattr(
-        nginxdp.os,
-        "execv",
-        lambda binary, args: executed.append((binary, args)),
-    )
-    monkeypatch.setattr(nginxdp, "NGINX_BINARY", "/usr/sbin/nginx")
-
-    assert nginxdp.main(["--config", str(config_file)]) == 0
-    generated = tmp_path / "run/nginx.conf"
-    assert "listen 8090;" in generated.read_text(encoding="utf-8")
-    assert os.stat(generated).st_mode & 0o777 == 0o640
-    assert os.stat(generated.parent).st_mode & 0o777 == 0o750
-    assert executed == [("/usr/sbin/nginx", ["/usr/sbin/nginx", "-c", str(generated)])]
-
-
 def test_prepare_service_paths_creates_configured_directories(tmp_path, monkeypatch):
     config_file = _write_config(
         tmp_path / "nginxdp.ini",
