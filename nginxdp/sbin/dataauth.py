@@ -171,6 +171,9 @@ def run_with_idtoken(
         env["_CONDOR_SEC_TOKEN_DIRECTORY"] = token_dir
         env["_CONDOR_SEC_CLIENT_AUTHENTICATION_METHODS"] = "IDTOKENS"
         env["_CONDOR_SEC_CLIENT_AUTHENTICATION"] = "REQUIRED"
+        env["_CONDOR_TOOL.SEC_TOKEN_DIRECTORY"] = token_dir
+        env["_CONDOR_TOOL.SEC_CLIENT_AUTHENTICATION_METHODS"] = "IDTOKENS"
+        env["_CONDOR_TOOL.SEC_CLIENT_AUTHENTICATION"] = "REQUIRED"
         proc = sp.run(
             cmd,
             stdout=sp.PIPE,
