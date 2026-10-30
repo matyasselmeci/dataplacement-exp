@@ -1,7 +1,7 @@
 Summary: dataplacement
 Name: dataplacement
 Version: 0.0.7
-Release: 1%{?dist}
+Release: 2%{?dist}
 License: Apache 2.0
 Url: https://github.com/matyasselmeci/dataplacement-exp
 Source0: %{name}-%{version}.tar.gz
@@ -9,6 +9,7 @@ Requires: /usr/sbin/condor_placementd
 Requires: /usr/sbin/nginx
 Requires: condor
 Buildarch: noarch
+%systemd_requires
 
 
 %description
@@ -27,6 +28,10 @@ cd nginxdp
 mkdir -p ${RPM_BUILD_ROOT}/srv/dataplacement/{files,files_upload,files_upload_tmp}
 mkdir -p ${RPM_BUILD_ROOT}/var/log/dataplacement
 touch ${RPM_BUILD_ROOT}/srv/dataplacement/dataauth.sock
+
+%systemd_post dataauth.service nginxdp.service uploadmover.service
+%systemd_preun dataauth.service nginxdp.service uploadmover.service
+%systemd_postun_with_restart dataauth.service nginxdp.service uploadmover.service
 
 %files
 %config(noreplace) /etc/nginxdp.ini
