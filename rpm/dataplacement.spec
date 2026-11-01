@@ -1,7 +1,7 @@
 Summary: dataplacement
 Name: dataplacement
-Version: 0.0.7
-Release: 2%{?dist}
+Version: 0.0.8
+Release: 1%{?dist}
 License: Apache 2.0
 Url: https://github.com/matyasselmeci/dataplacement-exp
 Source0: %{name}-%{version}.tar.gz
@@ -52,6 +52,9 @@ touch ${RPM_BUILD_ROOT}/srv/dataplacement/dataauth.sock
 %attr(751,nginx,root) %dir /var/log/dataplacement
 
 %changelog
+* Sun Nov 01 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.8
+- Make convenience symlinks for 'short' AP user IDs
+
 * Fri Oct 30 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.7
 - Set subsys-specific options
 
