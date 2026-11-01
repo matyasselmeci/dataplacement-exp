@@ -41,6 +41,16 @@ Pathish = Union[os.PathLike, str]
 logger = logging.getLogger("uploadmover")
 
 
+def _get_uid_domain() -> Union[str, None]:
+    """Return HTCondor's configured UID_DOMAIN, or None when it is unavailable."""
+    try:
+        import htcondor2 as htcondor  # type:ignore
+
+        return htcondor.param.get("UID_DOMAIN", None) or None
+    except (AttributeError, KeyError, ImportError):
+        return None
+
+
 def _qualify_ap_user_id(ap_user_id: str) -> str:
     """
     Check if an AP user ID is fully qualified (i.e., contains a domain)
@@ -56,13 +66,7 @@ def _qualify_ap_user_id(ap_user_id: str) -> str:
     if "@" in ap_user_id:
         return ap_user_id
     # If no domain is present, we need to qualify the user ID
-    uid_domain = None
-    try:
-        import htcondor2 as htcondor
-
-        uid_domain = htcondor.param.get("UID_DOMAIN", None)
-    except (AttributeError, KeyError, ImportError):
-        pass
+    uid_domain = _get_uid_domain()
     if not uid_domain:
         import socket
 
@@ -431,6 +435,26 @@ def ensure_dest_dir_exists(mapping: UserMapping, opts: Options):
     _ensure_directory(dest_dir, opts.nginx_files_dir, mapping.uid, _nginx_gid())
 
 
+def ensure_unqualified_symlink(
+    mapping: UserMapping, uid_domain: Union[str, None], opts: Options
+) -> None:
+    """Create the local-part alias for a mapped ID in the configured UID domain."""
+    if not uid_domain:
+        return
+    local_part, separator, domain = mapping.ap_user_id.partition("@")
+    if not separator or domain != uid_domain or not _is_safe_component(local_part):
+        return
+
+    ensure_dest_dir_exists(mapping, opts)
+    alias_path = opts.nginx_files_dir / local_part
+    try:
+        alias_path.symlink_to(mapping.ap_user_id)
+    except FileExistsError:
+        if alias_path.is_symlink() and os.readlink(alias_path) == mapping.ap_user_id:
+            return
+        raise OSError(f"Cannot create AP user alias at existing path {alias_path}")
+
+
 def move_and_chown_file(
     src_path: Pathish, dst_path: Pathish, owner: Union[str, int], opts: Options
 ):
@@ -585,11 +609,19 @@ def move_uploaded_files(
     """
     successes = []
     failures = []
+    uid_domain = _get_uid_domain()
 
     for mapping in mappings:
         if not _is_safe_component(mapping.ap_user_id):
             logger.error("Skipping unsafe AP user ID %r", mapping.ap_user_id)
             continue
+
+        try:
+            ensure_unqualified_symlink(mapping, uid_domain, opts)
+        except (OSError, ValueError) as err:
+            logger.error(
+                "Cannot create unqualified alias for %s: %s", mapping.ap_user_id, err
+            )
 
         user_upload_dir = opts.nginx_upload_dir / mapping.ap_user_id
         try:

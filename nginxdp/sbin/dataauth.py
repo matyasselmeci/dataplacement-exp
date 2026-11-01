@@ -208,8 +208,51 @@ def ping_with_idtoken(idtoken: str, method: str) -> t.Tuple[bool, str]:
         idtoken=idtoken,
     )
     remote_user_name = result.stdout.strip().splitlines()[0] if result.stdout else ""
-    success = result.returncode == 0 and bool(remote_user_name)
+    success = result.returncode == 0 and "@" in remote_user_name
     return success, remote_user_name
+
+
+def _get_uid_domain() -> t.Optional[str]:
+    """Return HTCondor's configured UID_DOMAIN, or None when unavailable."""
+    try:
+        import htcondor2 as htcondor
+
+        return htcondor.param.get("UID_DOMAIN", None) or None
+    except (AttributeError, KeyError, ImportError):
+        return None
+
+
+def _is_user_path_allowed(request_uri: str, remote_user_name: str) -> bool:
+    """Authorize a user's qualified path and, when applicable, its /files alias."""
+    if any(
+        is_uri_allowed(request_uri, f"{prefix}/{remote_user_name}")
+        for prefix in PATH_PREFIXES
+    ):
+        return True
+
+    uid_domain = _get_uid_domain()
+    if not uid_domain:
+        return False
+
+    local_part, separator, domain = remote_user_name.rpartition("@")
+    if (
+        not separator
+        or not local_part
+        or local_part in {".", ".."}
+        or any(char in local_part for char in ("/", "\\", ":", "\0"))
+        or not domain
+    ):
+        return False
+    configured_domain = uid_domain.lower().strip(".")
+    remote_domain = domain.lower().strip(".")
+    if not configured_domain or not (
+        remote_domain == configured_domain
+        or remote_domain.endswith("." + configured_domain)
+    ):
+        return False
+
+    # uploadmover creates this alias only in /files, not in the staging tree.
+    return is_uri_allowed(request_uri, f"/files/{local_part}")
 
 
 def drop_privileges(username: str) -> None:
@@ -356,10 +399,7 @@ class AuthHandler(BaseHTTPRequestHandler):
         if success:
             # Check that the normalized path is within the allowed directory.
             # Users browse /files/ and can read their own staged /files_upload/ paths.
-            if not any(
-                is_uri_allowed(original_uri, f"{prefix}/{remote_user_name}")
-                for prefix in PATH_PREFIXES
-            ):
+            if not _is_user_path_allowed(original_uri, remote_user_name):
                 self.send_response(
                     403,
                     "Access to this path (%r) denied for %r"

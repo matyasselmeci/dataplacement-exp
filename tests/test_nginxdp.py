@@ -161,6 +161,58 @@ def test_dataauth_denies_head_on_another_users_staged_upload(monkeypatch):
     assert responses[0][0] == 403
 
 
+@pytest.mark.parametrize(
+    ("request_uri", "remote_user_name", "uid_domain", "allowed"),
+    [
+        ("/files/alice/report.txt", "alice@sub.chtc.wisc.edu", "chtc.wisc.edu", True),
+        ("/files/alice/report.txt", "alice@chtc.wisc.edu", "chtc.wisc.edu", True),
+        ("/files/alice/report.txt", "alice@notchtc.wisc.edu", "chtc.wisc.edu", False),
+        (
+            "/files_upload/alice/report.txt",
+            "alice@sub.chtc.wisc.edu",
+            "chtc.wisc.edu",
+            False,
+        ),
+        ("/files/alice/report.txt", "alice@sub.chtc.wisc.edu", None, False),
+        (
+            "/files/alice/bob/report.txt",
+            "alice/bob@sub.chtc.wisc.edu",
+            "chtc.wisc.edu",
+            False,
+        ),
+    ],
+)
+def test_dataauth_allows_domain_suffix_alias_only_in_published_files(
+    monkeypatch, request_uri, remote_user_name, uid_domain, allowed
+):
+    monkeypatch.setattr(dataauth, "_get_uid_domain", lambda: uid_domain)
+
+    assert dataauth._is_user_path_allowed(request_uri, remote_user_name) is allowed
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected_success"),
+    [
+        ("alice@example.net\n", True),
+        ("alice\n", False),
+        ("", False),
+    ],
+)
+def test_ping_with_idtoken_requires_qualified_remote_username(
+    monkeypatch, stdout, expected_success
+):
+    monkeypatch.setattr(
+        dataauth,
+        "run_with_idtoken",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=stdout),
+    )
+
+    success, remote_user_name = dataauth.ping_with_idtoken("token", "read")
+
+    assert success is expected_success
+    assert remote_user_name == stdout.strip()
+
+
 def test_prepare_service_paths_creates_configured_directories(tmp_path, monkeypatch):
     config_file = _write_config(
         tmp_path / "nginxdp.ini",

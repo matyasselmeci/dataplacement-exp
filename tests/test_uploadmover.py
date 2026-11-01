@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import stat
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import pytest
 SCRIPT_PATH = Path(__file__).parents[1] / "nginxdp" / "sbin" / "uploadmover.py"
 sys.path.insert(0, str(SCRIPT_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("uploadmover", SCRIPT_PATH)
+assert SPEC is not None
+assert SPEC.loader is not None
 uploadmover = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(uploadmover)
 
@@ -162,6 +165,47 @@ def test_chowns_upload_in_place_when_roots_are_the_same(tmp_path, monkeypatch):
     assert source.read_text(encoding="utf-8") == "uploaded data"
     assert source in chowned_paths
     assert stat.S_IMODE(source.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("uid_domain", "expected_alias"),
+    [
+        ("chtc.wisc.edu", True),
+        ("example.net", False),
+        (None, False),
+    ],
+)
+def test_creates_unqualified_alias_only_for_uid_domain(
+    tmp_path, monkeypatch, uid_domain, expected_alias
+):
+    _fake_user(monkeypatch)
+    monkeypatch.setattr(uploadmover, "_get_uid_domain", lambda: uid_domain)
+    files_dir = tmp_path / "files"
+    upload_dir = tmp_path / "files_upload"
+    files_dir.mkdir()
+    upload_dir.mkdir()
+    opts = uploadmover.Options(
+        mapfile=tmp_path / "mapfile",
+        nginx_files_dir=files_dir,
+        nginx_upload_dir=upload_dir,
+        period=15,
+        oneshot=True,
+    )
+
+    successes, failures = uploadmover.move_uploaded_files(
+        [uploadmover.UserMapping("matyas@chtc.wisc.edu", "matyas")], opts
+    )
+
+    alias = files_dir / "matyas"
+    target_dir = files_dir / "matyas@chtc.wisc.edu"
+    assert successes == []
+    assert failures == []
+    assert alias.is_symlink() is expected_alias
+    if expected_alias:
+        assert os.readlink(str(alias)) == "matyas@chtc.wisc.edu"
+        assert target_dir.is_dir()
+    else:
+        assert not target_dir.exists()
 
 
 def test_refuses_destination_symlink(tmp_path, monkeypatch):
