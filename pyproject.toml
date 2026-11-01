@@ -1,0 +1,30 @@
+[project]
+dependencies = [
+    "htcondor",
+]
+
+name = "dataplacement-exp"
+version = "0.0.8"
+description = ""
+authors = [{"name"="Matyas Selmeci", "email"="mselmeci@wisc.edu"}]
+readme = "README.md"
+
+requires-python = ">= 3.6"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "black",
+    "isort",
+]
