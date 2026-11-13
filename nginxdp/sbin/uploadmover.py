@@ -185,9 +185,9 @@ def _read_dataplacement_mapfile(
     username separated by whitespace. Leading and trailing whitespace is
     ignored, and a line is a comment when its first non-whitespace character
     is ``#``. The function skips malformed lines, unsafe AP user IDs, IDs
-    already present in an accepted mapping, unknown Unix accounts, and
-    accounts whose UID is below the system's configured ``UID_MIN``. It logs
-    each rejected entry.
+    already present in an accepted mapping after qualification, unknown Unix
+    accounts, and accounts whose UID is below the system's configured
+    ``UID_MIN``. It logs each rejected entry.
 
     Args:
         mapfile_path: Path to the mapfile.
@@ -229,7 +229,8 @@ def _read_dataplacement_mapfile(
                 ap_user_id,
             )
             continue
-        if ap_user_id in seen_ids:
+        qualified_id = _qualify_ap_user_id(ap_user_id)
+        if qualified_id in seen_ids:
             logger.warning(
                 "Ignoring duplicate AP user ID %r on mapfile line %d",
                 ap_user_id,
@@ -237,7 +238,7 @@ def _read_dataplacement_mapfile(
             )
             continue
 
-        mapping = UserMapping(_qualify_ap_user_id(ap_user_id), username)
+        mapping = UserMapping(qualified_id, username)
         try:
             uid = mapping.uid
         except KeyError:
@@ -256,7 +257,7 @@ def _read_dataplacement_mapfile(
             )
             continue
 
-        seen_ids.add(ap_user_id)
+        seen_ids.add(qualified_id)
         mappings.append(mapping)
 
     return mappings, entry_count, hashlib.sha256(content).hexdigest()

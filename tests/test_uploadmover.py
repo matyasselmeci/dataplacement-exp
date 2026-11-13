@@ -59,6 +59,52 @@ def test_read_mapfile_filters_invalid_entries(tmp_path, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize(
+    "first,second",
+    [("alice", "alice@example.net"), ("alice@example.net", "alice")],
+)
+def test_read_mapfile_deduplicates_qualified_ids(tmp_path, monkeypatch, first, second):
+    monkeypatch.setattr(uploadmover, "_get_uid_domain", lambda: "example.net")
+    monkeypatch.setattr(uploadmover, "_read_uid_min", lambda: 1000)
+    _fake_user(monkeypatch)
+    warnings = []
+    monkeypatch.setattr(
+        uploadmover.logger,
+        "warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+    mapfile = tmp_path / "mapfile"
+    mapfile.write_text(
+        f"{first} alice\n{second} other\nalice@elsewhere.net other\n",
+        encoding="utf-8",
+    )
+
+    assert uploadmover.read_dataplacement_mapfile(mapfile) == [
+        uploadmover.UserMapping("alice@example.net", "alice"),
+        uploadmover.UserMapping("alice@elsewhere.net", "other"),
+    ]
+    assert len(warnings) == 1
+    assert "duplicate AP user ID" in warnings[0]
+    assert "line 2" in warnings[0]
+
+
+def test_rejected_mapping_does_not_reserve_qualified_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(uploadmover, "_get_uid_domain", lambda: "example.net")
+    monkeypatch.setattr(uploadmover, "_read_uid_min", lambda: 1000)
+    users = {"system": 999, "alice": 1200}
+    monkeypatch.setattr(
+        uploadmover.pwd,
+        "getpwnam",
+        lambda username: SimpleNamespace(pw_uid=users[username]),
+    )
+    mapfile = tmp_path / "mapfile"
+    mapfile.write_text("alice system\nalice@example.net alice\n", encoding="utf-8")
+
+    assert uploadmover.read_dataplacement_mapfile(mapfile) == [
+        uploadmover.UserMapping("alice@example.net", "alice")
+    ]
+
+
 def test_warns_once_for_empty_or_all_invalid_mapfile_content(tmp_path, monkeypatch):
     warnings = []
     monkeypatch.setattr(uploadmover.logger, "propagate", False)
