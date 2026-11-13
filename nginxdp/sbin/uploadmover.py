@@ -17,6 +17,7 @@ disappearance from staging as the upload-complete signal.
 
 import argparse
 import errno
+import functools
 import grp
 import hashlib
 import logging
@@ -76,6 +77,7 @@ def _qualify_ap_user_id(ap_user_id: str) -> str:
     return f"{ap_user_id}@{uid_domain}"
 
 
+@functools.lru_cache(1)
 def _read_uid_min(login_defs_path: Pathish = "/etc/login.defs") -> int:
     """
     Read the minimum UID for regular user accounts.
