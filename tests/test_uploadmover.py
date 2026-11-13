@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import os
 import stat
@@ -101,6 +102,12 @@ def test_warns_once_for_empty_or_all_invalid_mapfile_content(tmp_path, monkeypat
 
 def test_moves_upload_and_sets_nginx_read_access(tmp_path, monkeypatch):
     _fake_user(monkeypatch)
+    chowns = []
+    monkeypatch.setattr(
+        uploadmover.os,
+        "chown",
+        lambda path, uid, gid, **kwargs: chowns.append((Path(path), uid, gid)),
+    )
     files_dir = tmp_path / "files"
     upload_dir = tmp_path / "files_upload"
     files_dir.mkdir()
@@ -116,6 +123,17 @@ def test_moves_upload_and_sets_nginx_read_access(tmp_path, monkeypatch):
         period=15,
         oneshot=True,
     )
+    original_move = uploadmover.move_and_chown_file
+
+    def check_checksum_before_move(src, dst, owner, options):
+        checksum = files_dir / "alice@example.net/.__meta/checksums/nested/report.txt"
+        assert (
+            checksum.read_text() == hashlib.sha256(b"uploaded data").hexdigest() + "\n"
+        )
+        assert Path(src).exists()
+        original_move(src, dst, owner, options)
+
+    monkeypatch.setattr(uploadmover, "move_and_chown_file", check_checksum_before_move)
 
     successes, failures = uploadmover.move_uploaded_files(
         [uploadmover.UserMapping("alice@example.net", "alice")], opts
@@ -125,8 +143,16 @@ def test_moves_upload_and_sets_nginx_read_access(tmp_path, monkeypatch):
     assert successes == ["alice@example.net/nested/report.txt"]
     assert failures == []
     assert destination.read_text(encoding="utf-8") == "uploaded data"
+    checksum = files_dir / "alice@example.net" / ".__meta/checksums/nested/report.txt"
+    assert checksum.read_text() == hashlib.sha256(b"uploaded data").hexdigest() + "\n"
+    assert stat.S_IMODE(checksum.stat().st_mode) == 0o644
+    for root in (upload_dir, files_dir):
+        metadata = root / "alice@example.net" / ".__meta"
+        assert stat.S_IMODE(metadata.stat().st_mode) == 0o755
+        assert stat.S_IMODE((metadata / "checksums").stat().st_mode) == 0o755
+        assert (metadata, 0, 4321) in chowns
     assert not source.exists()
-    assert not (upload_dir / "alice@example.net").exists()
+    assert not (upload_dir / "alice@example.net" / "nested").exists()
     assert upload_dir.is_dir()
     assert stat.S_IMODE(destination.stat().st_mode) & stat.S_IRGRP
     assert stat.S_IMODE(destination.parent.stat().st_mode) == 0o770
@@ -155,12 +181,6 @@ def test_chowns_upload_in_place_when_roots_are_the_same(tmp_path, monkeypatch):
         "chown",
         lambda path, uid, gid, **kwargs: chowned_paths.append(Path(path)),
     )
-    monkeypatch.setattr(
-        uploadmover.os,
-        "replace",
-        lambda *args: pytest.fail("same-root uploads must not be moved"),
-    )
-
     successes, failures = uploadmover.move_uploaded_files(
         [uploadmover.UserMapping("alice@example.net", "alice")], opts
     )
@@ -171,6 +191,88 @@ def test_chowns_upload_in_place_when_roots_are_the_same(tmp_path, monkeypatch):
     assert empty_dir.is_dir()
     assert source in chowned_paths
     assert stat.S_IMODE(source.stat().st_mode) == 0o600
+    checksum = source.parent / ".__meta/checksums/report.txt"
+    assert checksum.read_text() == hashlib.sha256(b"uploaded data").hexdigest() + "\n"
+    assert uploadmover.move_uploaded_files(
+        [uploadmover.UserMapping("alice@example.net", "alice")], opts
+    ) == (["alice@example.net/report.txt"], [])
+    assert not (source.parent / ".__meta/checksums/.__meta").exists()
+
+
+def test_failed_replacement_restores_previous_checksum(tmp_path, monkeypatch):
+    _fake_user(monkeypatch)
+    monkeypatch.setattr(uploadmover, "_get_uid_domain", lambda: None)
+    files_dir = tmp_path / "files"
+    files_dir.mkdir()
+    upload_dir = tmp_path / "files_upload"
+    source = upload_dir / "alice@example.net" / "report.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("first")
+    opts = uploadmover.Options(tmp_path / "mapfile", files_dir, upload_dir, 5, True)
+    mapping = [uploadmover.UserMapping("alice@example.net", "alice")]
+    assert uploadmover.move_uploaded_files(mapping, opts)[1] == []
+    checksum = files_dir / "alice@example.net" / ".__meta/checksums/report.txt"
+    previous = checksum.read_text()
+    source.write_text("second")
+    original_move = uploadmover.move_and_chown_file
+    monkeypatch.setattr(
+        uploadmover,
+        "move_and_chown_file",
+        lambda *args: (_ for _ in ()).throw(OSError("move failed")),
+    )
+
+    assert uploadmover.move_uploaded_files(mapping, opts) == (
+        [],
+        ["alice@example.net/report.txt"],
+    )
+    assert checksum.read_text() == previous
+    assert source.read_text() == "second"
+    assert (files_dir / "alice@example.net/report.txt").read_text() == "first"
+    monkeypatch.setattr(uploadmover, "move_and_chown_file", original_move)
+    assert uploadmover.move_uploaded_files(mapping, opts) == (
+        ["alice@example.net/report.txt"],
+        [],
+    )
+    assert checksum.read_text() == hashlib.sha256(b"second").hexdigest() + "\n"
+
+
+def test_rejects_symlinked_metadata_directory(tmp_path, monkeypatch):
+    _fake_user(monkeypatch)
+    files_dir = tmp_path / "files"
+    files_dir.mkdir()
+    upload_dir = tmp_path / "files_upload"
+    source = upload_dir / "alice@example.net" / "report.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("data")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (source.parent / ".__meta").symlink_to(outside, target_is_directory=True)
+    opts = uploadmover.Options(tmp_path / "mapfile", files_dir, upload_dir, 5, True)
+
+    uploadmover.move_uploaded_files(
+        [uploadmover.UserMapping("alice@example.net", "alice")], opts
+    )
+    assert source.exists()
+    assert list(outside.iterdir()) == []
+
+
+def test_rejects_preexisting_metadata_owned_by_another_user(tmp_path, monkeypatch):
+    _fake_user(monkeypatch)
+    monkeypatch.setattr(uploadmover.os, "geteuid", lambda: os.getuid() + 1)
+    files_dir = tmp_path / "files"
+    files_dir.mkdir()
+    upload_dir = tmp_path / "files_upload"
+    source = upload_dir / "alice@example.net" / "report.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("data")
+    (source.parent / ".__meta").mkdir()
+    opts = uploadmover.Options(tmp_path / "mapfile", files_dir, upload_dir, 5, True)
+
+    uploadmover.move_uploaded_files(
+        [uploadmover.UserMapping("alice@example.net", "alice")], opts
+    )
+    assert source.exists()
+    assert not (files_dir / "alice@example.net/report.txt").exists()
 
 
 @pytest.mark.parametrize(

@@ -26,6 +26,7 @@ import pathlib
 import pwd
 import stat
 import sys
+import tempfile
 import time
 from typing import List, NamedTuple, Tuple, Union
 
@@ -378,13 +379,18 @@ def _nginx_gid() -> int:
 
 
 def _ensure_directory(
-    directory: pathlib.Path, root: pathlib.Path, uid: int, gid: int
+    directory: pathlib.Path,
+    root: pathlib.Path,
+    uid: int,
+    gid: int,
+    mode: int = 0o770,
+    trusted_owner: bool = False,
 ) -> None:
     """
     Create directories below ``root`` and set their owner and mode.
 
     The root itself is not changed. Each descendant directory is created if
-    needed, then assigned ``uid`` and ``gid`` with mode ``0o770``. Existing
+    needed, then assigned ``uid``, ``gid`` and ``mode``. Existing
     symlinks and non-directory entries are rejected.
 
     Args:
@@ -392,6 +398,8 @@ def _ensure_directory(
         root: Existing root directory that must contain ``directory``.
         uid: Owner user ID for descendant directories.
         gid: Owner group ID for descendant directories.
+        mode: Permissions for descendant directories.
+        trusted_owner: Reject existing directories not owned by the service.
 
     Raises:
         OSError: If the root cannot be resolved, a descendant is not a
@@ -410,13 +418,69 @@ def _ensure_directory(
     for component in relative.parts:
         current = current / component
         try:
-            current.mkdir(mode=0o770)
+            current.mkdir(mode=mode)
         except FileExistsError:
-            mode = current.lstat().st_mode
-            if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            entry = current.lstat()
+            if stat.S_ISLNK(entry.st_mode) or not stat.S_ISDIR(entry.st_mode):
                 raise OSError(f"Expected a directory at {current}")
+            if trusted_owner and entry.st_uid != os.geteuid():
+                raise OSError(f"Untrusted directory owner at {current}")
         os.chown(current, uid, gid, follow_symlinks=False)
-        os.chmod(current, 0o770, follow_symlinks=False)
+        os.chmod(current, mode, follow_symlinks=False)
+
+
+def _publish_checksum(
+    src: pathlib.Path,
+    relative: pathlib.Path,
+    upload_root: pathlib.Path,
+    dest_root: pathlib.Path,
+    opts: Options,
+) -> Tuple[pathlib.Path, Union[pathlib.Path, None]]:
+    """Hash an upload and publish root-owned metadata, retaining a rollback link."""
+    gid = _nginx_gid()
+    staging = upload_root / ".__meta" / "checksums" / relative
+    destination = dest_root / ".__meta" / "checksums" / relative
+    _ensure_directory(staging.parent, upload_root, 0, gid, 0o755, trusted_owner=True)
+    _ensure_directory(destination.parent, dest_root, 0, gid, 0o755, trusted_owner=True)
+    if os.path.lexists(destination) and not stat.S_ISREG(destination.lstat().st_mode):
+        raise OSError(f"Checksum destination is not a regular file: {destination}")
+
+    digest = hashlib.sha256()
+    fd = os.open(str(src), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as uploaded:
+        if not stat.S_ISREG(os.fstat(uploaded.fileno()).st_mode):
+            raise OSError(f"Upload is not a regular file: {src}")
+        for chunk in iter(lambda: uploaded.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    backup = None
+    temp_path = None
+    published = False
+    try:
+        fd, temp_name = tempfile.mkstemp(prefix=".checksum-", dir=str(staging.parent))
+        temp_path = pathlib.Path(temp_name)
+        with os.fdopen(fd, "w", encoding="ascii") as checksum:
+            checksum.write(digest.hexdigest() + "\n")
+        os.chown(temp_path, 0, gid, follow_symlinks=False)
+        os.chmod(temp_path, 0o644, follow_symlinks=False)
+        if os.path.lexists(destination):
+            fd, backup_name = tempfile.mkstemp(
+                prefix=".checksum-backup-", dir=str(destination.parent)
+            )
+            os.close(fd)
+            backup = pathlib.Path(backup_name)
+            backup.unlink()
+            os.link(destination, backup, follow_symlinks=False)
+        os.replace(temp_path, staging)
+        if not opts.same_roots:
+            os.replace(staging, destination)
+        published = True
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
+        if not published and backup is not None and backup.exists():
+            backup.unlink()
+    return destination, backup
 
 
 def ensure_dest_dir_exists(mapping: UserMapping, opts: Options):
@@ -632,14 +696,25 @@ def move_uploaded_files(
                 continue
             if not stat.S_ISDIR(user_upload_real.lstat().st_mode):
                 raise OSError(f"Upload path is not a directory: {user_upload_dir}")
+            _ensure_directory(
+                user_upload_real / ".__meta" / "checksums",
+                user_upload_real,
+                0,
+                _nginx_gid(),
+                0o755,
+                trusted_owner=True,
+            )
         except (OSError, ValueError) as err:
             logger.error("Cannot scan uploads for %s: %s", mapping.ap_user_id, err)
             continue
 
-        for current_dir, dirnames, filenames in os.walk(
-            user_upload_real, topdown=False
-        ):
+        scanned_dirs = []
+        for current_dir, dirnames, filenames in os.walk(user_upload_real, topdown=True):
             current_path = pathlib.Path(current_dir)
+            scanned_dirs.append(current_path)
+            if current_path == user_upload_real and ".__meta" in dirnames:
+                # Metadata is managed by this service, never treated as an upload.
+                dirnames.remove(".__meta")
             for dirname in dirnames:
                 child = current_path / dirname
                 if child.is_symlink():
@@ -649,20 +724,43 @@ def move_uploaded_files(
                     )
 
             for filename in filenames:
+                if current_path == user_upload_real and filename == ".__meta":
+                    continue
                 src = current_path / filename
                 relative = src.relative_to(user_upload_real)
                 relative_dest = pathlib.Path(mapping.ap_user_id) / relative
                 dst = opts.nginx_files_dir / relative_dest
                 try:
-                    # move_and_chown_file also repairs parent directories.
-                    move_and_chown_file(src, dst, mapping.username, opts)
+                    ensure_dest_dir_exists(mapping, opts)
+                    # TODO: Ensure the hashed file is the one moved; a concurrent
+                    # upload can replace the staging path between these operations.
+                    checksum, backup = _publish_checksum(
+                        src,
+                        relative,
+                        user_upload_real,
+                        opts.nginx_files_dir / mapping.ap_user_id,
+                        opts,
+                    )
+                    try:
+                        # The data move remains the upload-complete signal.
+                        move_and_chown_file(src, dst, mapping.username, opts)
+                    except (OSError, ValueError, KeyError):
+                        if backup is None:
+                            checksum.unlink()
+                        else:
+                            os.replace(backup, checksum)
+                        raise
+                    else:
+                        if backup is not None:
+                            backup.unlink()
                 except (OSError, ValueError) as err:
                     logger.error("Failed to process upload %s: %s", src, err)
                     failures.append(relative_dest.as_posix())
                 else:
                     successes.append(relative_dest.as_posix())
 
-            if not same_root:
+        if not same_root:
+            for current_path in reversed(scanned_dirs):
                 # rmdir preserves failed uploads and files arriving during this pass.
                 try:
                     current_path.rmdir()

@@ -162,6 +162,39 @@ def test_dataauth_denies_head_on_another_users_staged_upload(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    ("method", "uri", "status"),
+    [
+        ("PUT", "/files_upload/alice@example.net/.__meta/checksums/a", 403),
+        ("DELETE", "/files_upload/alice@example.net/%2e__meta", 403),
+        ("DELETE", "/files_upload/alice@example.net/", 403),
+        ("POST", "/files/alice/.__meta/checksums/a", 403),
+        ("GET", "/files/alice/.__meta/checksums/a", 200),
+        ("PUT", "/files_upload/alice@example.net/nested/.__meta/a", 200),
+    ],
+)
+def test_dataauth_protects_metadata(monkeypatch, method, uri, status):
+    handler = object.__new__(dataauth.AuthHandler)
+    handler.headers = {
+        "X-Original-URI": uri,
+        "X-Original-Method": method,
+        "Authorization": "Bearer valid.token.signature",
+    }
+    handler.client_address = None
+    responses = []
+    monkeypatch.setattr(dataauth, "_get_uid_domain", lambda: "example.net")
+    monkeypatch.setattr(dataauth, "token_looks_valid", lambda token: True)
+    monkeypatch.setattr(
+        dataauth, "ping_with_idtoken", lambda *args: (True, "alice@example.net")
+    )
+    handler.send_response = lambda code, *args: responses.append(code)
+    handler.end_headers = lambda: None
+
+    handler.do_GET()
+
+    assert responses == [status]
+
+
+@pytest.mark.parametrize(
     ("request_uri", "remote_user_name", "uid_domain", "allowed"),
     [
         ("/files/alice/report.txt", "alice@sub.chtc.wisc.edu", "chtc.wisc.edu", True),

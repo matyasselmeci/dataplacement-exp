@@ -255,6 +255,16 @@ def _is_user_path_allowed(request_uri: str, remote_user_name: str) -> bool:
     return is_uri_allowed(request_uri, f"/files/{local_part}")
 
 
+def _is_metadata_write(request_uri: str, method: str) -> bool:
+    """Reserve each user's metadata tree, including its upload-root ancestor."""
+    parts = normalize_uri_path(request_uri).strip("/").split("/")
+    if len(parts) < 2 or "/" + parts[0] not in PATH_PREFIXES:
+        return False
+    return (len(parts) >= 3 and parts[2] == ".__meta") or (
+        method == "DELETE" and len(parts) == 2
+    )
+
+
 def drop_privileges(username: str) -> None:
     """Drop root privileges to the given user, including supplementary groups."""
     if os.geteuid() != 0:
@@ -399,7 +409,10 @@ class AuthHandler(BaseHTTPRequestHandler):
         if success:
             # Check that the normalized path is within the allowed directory.
             # Users browse /files/ and can read their own staged /files_upload/ paths.
-            if not _is_user_path_allowed(original_uri, remote_user_name):
+            if not _is_user_path_allowed(original_uri, remote_user_name) or (
+                method == "write"
+                and _is_metadata_write(original_uri, original_method.upper())
+            ):
                 self.send_response(
                     403,
                     "Access to this path (%r) denied for %r"
