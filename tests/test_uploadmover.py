@@ -107,6 +107,7 @@ def test_moves_upload_and_sets_nginx_read_access(tmp_path, monkeypatch):
     source = upload_dir / "alice@example.net" / "nested" / "report.txt"
     source.parent.mkdir(parents=True)
     source.write_text("uploaded data", encoding="utf-8")
+    (upload_dir / "alice@example.net" / "empty" / "nested").mkdir(parents=True)
     source.chmod(0o600)
     opts = uploadmover.Options(
         mapfile=tmp_path / "mapfile",
@@ -125,6 +126,8 @@ def test_moves_upload_and_sets_nginx_read_access(tmp_path, monkeypatch):
     assert failures == []
     assert destination.read_text(encoding="utf-8") == "uploaded data"
     assert not source.exists()
+    assert not (upload_dir / "alice@example.net").exists()
+    assert upload_dir.is_dir()
     assert stat.S_IMODE(destination.stat().st_mode) & stat.S_IRGRP
     assert stat.S_IMODE(destination.parent.stat().st_mode) == 0o770
 
@@ -136,6 +139,8 @@ def test_chowns_upload_in_place_when_roots_are_the_same(tmp_path, monkeypatch):
     source = files_dir / "alice@example.net" / "report.txt"
     source.parent.mkdir()
     source.write_text("uploaded data", encoding="utf-8")
+    empty_dir = source.parent / "empty"
+    empty_dir.mkdir()
     source.chmod(0o600)
     opts = uploadmover.Options(
         mapfile=tmp_path / "mapfile",
@@ -163,6 +168,7 @@ def test_chowns_upload_in_place_when_roots_are_the_same(tmp_path, monkeypatch):
     assert successes == ["alice@example.net/report.txt"]
     assert failures == []
     assert source.read_text(encoding="utf-8") == "uploaded data"
+    assert empty_dir.is_dir()
     assert source in chowned_paths
     assert stat.S_IMODE(source.stat().st_mode) == 0o600
 
@@ -235,6 +241,83 @@ def test_refuses_destination_symlink(tmp_path, monkeypatch):
     assert failures == ["alice@example.net/report.txt"]
     assert source.exists()
     assert not (other_user_dir / "report.txt").exists()
+
+
+def test_cleanup_preserves_failed_uploads_and_symlinked_directories(
+    tmp_path, monkeypatch
+):
+    _fake_user(monkeypatch)
+    monkeypatch.setattr(uploadmover, "_get_uid_domain", lambda: None)
+    files_dir = tmp_path / "files"
+    upload_dir = tmp_path / "files_upload"
+    files_dir.mkdir()
+    user_dir = upload_dir / "alice@example.net"
+    failed = user_dir / "failed" / "report.txt"
+    failed.parent.mkdir(parents=True)
+    failed.write_text("uploaded data", encoding="utf-8")
+    moved = user_dir / "moved" / "report.txt"
+    moved.parent.mkdir()
+    moved.write_text("other data", encoding="utf-8")
+    (user_dir / "link").symlink_to(failed.parent, target_is_directory=True)
+    destination = files_dir / "alice@example.net" / "failed"
+    destination.mkdir(parents=True)
+    (destination / "report.txt").symlink_to(failed)
+    opts = uploadmover.Options(
+        mapfile=tmp_path / "mapfile",
+        nginx_files_dir=files_dir,
+        nginx_upload_dir=upload_dir,
+        period=15,
+        oneshot=True,
+    )
+
+    successes, failures = uploadmover.move_uploaded_files(
+        [uploadmover.UserMapping("alice@example.net", "alice")], opts
+    )
+
+    assert successes == ["alice@example.net/moved/report.txt"]
+    assert sorted(failures) == [
+        "alice@example.net/failed/report.txt",
+        "alice@example.net/link",
+    ]
+    assert failed.read_text(encoding="utf-8") == "uploaded data"
+    assert (user_dir / "link").is_symlink()
+    assert not moved.parent.exists()
+    assert user_dir.is_dir()
+
+
+def test_cleanup_logs_unexpected_removal_errors(tmp_path, monkeypatch):
+    _fake_user(monkeypatch)
+    monkeypatch.setattr(uploadmover, "_get_uid_domain", lambda: None)
+    files_dir = tmp_path / "files"
+    files_dir.mkdir()
+    upload_dir = tmp_path / "files_upload"
+    user_dir = upload_dir / "alice@example.net"
+    user_dir.mkdir(parents=True)
+    opts = uploadmover.Options(
+        mapfile=tmp_path / "mapfile",
+        nginx_files_dir=files_dir,
+        nginx_upload_dir=upload_dir,
+        period=15,
+        oneshot=True,
+    )
+    warnings = []
+    monkeypatch.setattr(
+        uploadmover.logger,
+        "warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+
+    def deny_removal(path):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(Path, "rmdir", deny_removal)
+
+    assert uploadmover.move_uploaded_files(
+        [uploadmover.UserMapping("alice@example.net", "alice")], opts
+    ) == ([], [])
+    assert user_dir.is_dir()
+    assert len(warnings) == 1
+    assert str(user_dir) in warnings[0]
 
 
 def test_get_options_parses_flags_and_rejects_invalid_period(tmp_path):

@@ -16,6 +16,7 @@ disappearance from staging as the upload-complete signal.
 """
 
 import argparse
+import errno
 import grp
 import hashlib
 import logging
@@ -44,7 +45,7 @@ logger = logging.getLogger("uploadmover")
 def _get_uid_domain() -> Union[str, None]:
     """Return HTCondor's configured UID_DOMAIN, or None when it is unavailable."""
     try:
-        import htcondor2 as htcondor  # type:ignore
+        import htcondor2 as htcondor  # type: ignore
 
         return htcondor.param.get("UID_DOMAIN", None) or None
     except (AttributeError, KeyError, ImportError):
@@ -592,10 +593,11 @@ def move_uploaded_files(
     For each safe AP user ID, the function scans its upload directory
     recursively. It moves regular files to the published root when the roots
     differ, or changes ownership in place when they resolve to the same
-    directory. Missing user upload directories are skipped. Unsafe mappings,
-    invalid upload directories, and failed files are logged. Failed files and
-    skipped symlinked subdirectories encountered during the scan appear in
-    the returned failure list.
+    directory. Empty staging directories are removed bottom-up only when the
+    roots differ. Missing user upload directories are skipped. Unsafe mappings,
+    invalid upload directories, failed files, and cleanup errors are logged.
+    Failed files and skipped symlinked subdirectories encountered during the
+    scan appear in the returned failure list.
 
     Args:
         mappings: AP user ID to Unix account mappings to process.
@@ -610,6 +612,7 @@ def move_uploaded_files(
     successes = []
     failures = []
     uid_domain = _get_uid_domain()
+    same_root = opts.nginx_files_dir.resolve() == opts.nginx_upload_dir.resolve()
 
     for mapping in mappings:
         if not _is_safe_component(mapping.ap_user_id):
@@ -636,7 +639,9 @@ def move_uploaded_files(
             logger.error("Cannot scan uploads for %s: %s", mapping.ap_user_id, err)
             continue
 
-        for current_dir, dirnames, filenames in os.walk(user_upload_real):
+        for current_dir, dirnames, filenames in os.walk(
+            user_upload_real, topdown=False
+        ):
             current_path = pathlib.Path(current_dir)
             for dirname in list(dirnames):
                 child = current_path / dirname
@@ -660,6 +665,16 @@ def move_uploaded_files(
                     failures.append(relative_dest.as_posix())
                 else:
                     successes.append(relative_dest.as_posix())
+
+            if not same_root:
+                # rmdir preserves failed uploads and files arriving during this pass.
+                try:
+                    current_path.rmdir()
+                except OSError as err:
+                    if err.errno not in (errno.ENOTEMPTY, errno.EEXIST, errno.ENOENT):
+                        logger.warning(
+                            "Cannot remove upload directory %s: %s", current_path, err
+                        )
 
     return successes, failures
 
