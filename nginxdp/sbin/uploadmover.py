@@ -35,7 +35,8 @@ assert sys.version_info >= (3, 6), "Requires Python 3.6+"
 
 DEFAULT_MAPFILE = "/etc/condor/user-mapfiles/dataplacement_mapfile"
 DEFAULT_PERIOD = 5  # seconds
-LOG_PATH = os.path.join(DEFAULT_LOG_DIR, "uploadmover.log")
+LOG_FILENAME = "uploadmover.log"
+LOG_PATH = os.path.join(DEFAULT_LOG_DIR, LOG_FILENAME)
 
 
 Pathish = Union[os.PathLike, str]
@@ -164,6 +165,11 @@ class Options(NamedTuple):
     period: int
     oneshot: bool
     log_path: pathlib.Path = pathlib.Path(LOG_PATH)
+
+    @property
+    def same_roots(self) -> bool:
+        """Whether the upload and published roots resolve to the same directory."""
+        return self.nginx_files_dir.resolve() == self.nginx_upload_dir.resolve()
 
 
 def _read_dataplacement_mapfile(
@@ -298,15 +304,14 @@ def _warn_on_empty_mapfile(
     Returns:
         ``content_hash``, for use as the hash on the next check.
     """
-    if content_hash == last_seen_hash:
-        return content_hash
-    if entry_count == 0:
-        logger.warning("Mapfile %s contains no entries", mapfile_path)
-    elif not mappings:
-        logger.warning(
-            "Mapfile %s contains entries, but all entries were filtered out as invalid",
-            mapfile_path,
-        )
+    if content_hash != last_seen_hash:
+        if entry_count == 0:
+            logger.warning("Mapfile %s contains no entries", mapfile_path)
+        elif not mappings:
+            logger.warning(
+                "Mapfile %s contains entries, but all entries were filtered out as invalid",
+                mapfile_path,
+            )
     return content_hash
 
 
@@ -498,11 +503,10 @@ def move_and_chown_file(
     if os.path.lexists(dst) and not stat.S_ISREG(dst.lstat().st_mode):
         raise OSError(f"Destination is not a regular file: {dst}")
 
-    uid = (
-        pwd.getpwuid(owner).pw_uid
-        if isinstance(owner, int)
-        else pwd.getpwnam(owner).pw_uid
-    )
+    try:
+        uid = int(owner)
+    except (TypeError, ValueError):
+        uid = pwd.getpwnam(owner).pw_uid
     gid = _nginx_gid()
     dest_root = opts.nginx_files_dir.resolve(strict=True)
     dest_relative = dst.relative_to(opts.nginx_files_dir)
@@ -510,24 +514,15 @@ def move_and_chown_file(
         not _is_safe_component(component) for component in dest_relative.parts
     ):
         raise ValueError(f"Unsafe destination path: {dst}")
+    dest = dest_root / dest_relative
+    _ensure_directory(dest.parent, dest_root, uid, gid)
 
-    user_dir = dest_root / dest_relative.parts[0]
-    _ensure_directory(user_dir, dest_root, uid, gid)
-    parent = user_dir
-    for component in dest_relative.parts[1:-1]:
-        if not _is_safe_component(component):
-            raise ValueError(f"Unsafe destination path: {dst}")
-        parent = parent / component
-        _ensure_directory(parent, user_dir, uid, gid)
-
-    same_root = opts.nginx_files_dir.resolve() == opts.nginx_upload_dir.resolve()
     os.chown(src, uid, gid, follow_symlinks=False)
-    if not same_root:
+    if not opts.same_roots:
         # Published files need nginx group-read access after they are moved.
         mode = (stat.S_IMODE(src.lstat().st_mode) & 0o777) | stat.S_IRGRP
         os.chmod(src, mode, follow_symlinks=False)
-        dst = parent / dst.name
-        os.replace(src, dst)
+        os.replace(src, dest)
 
 
 def get_options(argv) -> Options:
@@ -579,7 +574,7 @@ def get_options(argv) -> Options:
         ),
         period=args.period or config.uploadmover_period,
         oneshot=args.oneshot,
-        log_path=pathlib.Path(args.log_path or config.log_dir / "uploadmover.log"),
+        log_path=pathlib.Path(args.log_path or config.log_dir / LOG_FILENAME),
     )
     return opts
 
@@ -612,7 +607,7 @@ def move_uploaded_files(
     successes = []
     failures = []
     uid_domain = _get_uid_domain()
-    same_root = opts.nginx_files_dir.resolve() == opts.nginx_upload_dir.resolve()
+    same_root = opts.same_roots
 
     for mapping in mappings:
         if not _is_safe_component(mapping.ap_user_id):
@@ -643,10 +638,9 @@ def move_uploaded_files(
             user_upload_real, topdown=False
         ):
             current_path = pathlib.Path(current_dir)
-            for dirname in list(dirnames):
+            for dirname in dirnames:
                 child = current_path / dirname
                 if child.is_symlink():
-                    dirnames.remove(dirname)
                     relative = child.relative_to(user_upload_real)
                     failures.append(
                         (pathlib.Path(mapping.ap_user_id) / relative).as_posix()
@@ -658,7 +652,7 @@ def move_uploaded_files(
                 relative_dest = pathlib.Path(mapping.ap_user_id) / relative
                 dst = opts.nginx_files_dir / relative_dest
                 try:
-                    ensure_dest_dir_exists(mapping, opts)
+                    # move_and_chown_file also repairs parent directories.
                     move_and_chown_file(src, dst, mapping.username, opts)
                 except (OSError, ValueError) as err:
                     logger.error("Failed to process upload %s: %s", src, err)
@@ -701,6 +695,16 @@ def _configure_logging(log_path: Pathish = LOG_PATH) -> None:
     logger.propagate = False
 
 
+def _log_results(successes: List[str], failures: List[str], action: str) -> None:
+    """Log the outcome of one upload-processing pass."""
+    if successes:
+        logger.info("%d files %s", len(successes), action)
+        logger.debug("Files %s: %r", action, successes)
+    if failures:
+        logger.warning("%d files failed to process", len(failures))
+        logger.debug("Files failed to process: %r", failures)
+
+
 def main():
     """
     Run one upload pass or poll continuously, according to command options.
@@ -718,21 +722,12 @@ def main():
     opts = get_options(sys.argv[1:])
     _configure_logging(opts.log_path)
     logger.info("Starting upload mover")
-    action = (
-        "chowned"
-        if opts.nginx_files_dir.resolve() == opts.nginx_upload_dir.resolve()
-        else "moved"
-    )
+    action = "chowned" if opts.same_roots else "moved"
     if opts.oneshot:
         mappings, entry_count, content_hash = _read_dataplacement_mapfile(opts.mapfile)
         _warn_on_empty_mapfile(opts.mapfile, mappings, entry_count, content_hash, None)
         successes, failures = move_uploaded_files(mappings, opts)
-        if successes:
-            logger.info("%d files %s", len(successes), action)
-            logger.debug("Files %s: %r", action, successes)
-        if failures:
-            logger.warning("%d files failed to process", len(failures))
-            logger.debug("Files failed to process: %r", failures)
+        _log_results(successes, failures, action)
     else:
         first = True
         last_mapfile_hash = None
@@ -762,12 +757,7 @@ def main():
             )
             try:
                 successes, failures = move_uploaded_files(mappings, opts)
-                if len(successes) > 0:
-                    logger.info("%d files %s", len(successes), action)
-                    logger.debug("Files %s: %r", action, successes)
-                if len(failures) > 0:
-                    logger.warning("%d files failed to process", len(failures))
-                    logger.debug("Files failed to process: %r", failures)
+                _log_results(successes, failures, action)
                 time.sleep(opts.period)
             except KeyboardInterrupt:
                 print("Interrupt received, exiting", file=sys.stderr)
