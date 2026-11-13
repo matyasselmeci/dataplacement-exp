@@ -1,6 +1,6 @@
 Summary: dataplacement
 Name: dataplacement
-Version: 0.0.8
+Version: 0.0.9
 Release: 1%{?dist}
 License: Apache 2.0
 Url: https://github.com/matyasselmeci/dataplacement-exp
@@ -52,6 +52,9 @@ touch ${RPM_BUILD_ROOT}/srv/dataplacement/dataauth.sock
 %attr(751,nginx,root) %dir /var/log/dataplacement
 
 %changelog
+* Thu Nov 12 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.9
+- Remove empty directories after their files have been moved
+
 * Sun Nov 01 2026 Mátyás Selmeci <mselmeci@wisc.edu> - 0.0.8
 - Make convenience symlinks for 'short' AP user IDs
 
